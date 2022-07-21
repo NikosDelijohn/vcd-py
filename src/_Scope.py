@@ -12,14 +12,14 @@ class _Scope():
 	def __repr__(self) -> str:
 		return f"<{self.cell_name}, {len(self.vars.items())} wires, {len(self.scopes)} modules>"
 
-	def __str__(self) ->str:
+	def __str__(self) -> str:
 		return self.__repr__()
 
 	def append_var(self, vcd_variable : Var) -> None:
-		self.vars[vcd_variable._var_name] = vcd_variable
+		self.vars[vcd_variable.get_reference()] = vcd_variable
 
 	def append_scope(self, scope) -> None:
 		self.scopes.append(scope)
 
-	def get_var(self,variable_name : str) -> str:
+	def get_var(self, variable_name : str) -> str:
 		return self.vars[variable_name]
