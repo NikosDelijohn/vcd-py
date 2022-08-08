@@ -1,6 +1,5 @@
 class _Var():
 	
-	#$var wire 1 7* D $end
 	def __init__(self, var_type : str, size : str, id : str, var_name : str):
 
 		self.var_type  = var_type 

@@ -3,11 +3,13 @@
 #########################################
 
 from enum import Enum, auto
+from time import time 
 
 class Section(Enum):
     Header              = auto()
     Variable_Definition = auto()
     Value_Change        = auto()
+
 
 class eVCD_Strenth_Value(Enum):
 
@@ -64,5 +66,28 @@ class eVCD_Uknown_Direction_Values(Enum):
     def __str__(self):
         return f"{self.value}"
 
+class eVCD_Pattern():
+    
+    input_to_string  = "asd"
+
+    output_to_string  = "LHXTlh"
+    UNKNOWN = "01?FAaBbCcf"
+         
+    def __init__(self, value : str):
+
+        self.value = value 
+        self.type = 'INPUT' 
+
 
 #$var var_type size < identifier_code reference $end
+
+if __name__ == "__main__":
+
+    a = eVCD_Pattern.INPUT
+    a.value_to_logic()
+
+S_VAR_REGEXP = "^\$var\s+([a-z]+)\s+([0-9]+)\s+(.*)\s+([a-zA-Z0-9_]+)\s+\$end"
+E_VAR_REGEXP = "^\$var\s+(port)\s+(1|\[[0-9]+:[0-9]+\])\s+(<[0-9]+)\s(.*)\s\$end" 
+SCOPE_REGEXP = "^\$scope\s+(.*)\s+(.*)\s+\$end"
+
+tictoc = lambda ref : time() - ref

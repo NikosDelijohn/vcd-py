@@ -1,84 +1,30 @@
 from VCD_Parser import VCD_Parser 
-from utils import Section 
+from utils import Section, tictoc
 
+import time 
 import re
 import multiprocessing as mp
 
-from os          import cpu_count
-from _Var        import _Var   as Var
-from _Scope      import _Scope as Scope
-from typing      import Tuple, List, Dict
-
-__VAR_REGEXP__    = "^\$var\s+([a-z]+)\s+([0-9]+)\s+(.*)\s+([a-zA-Z0-9_]+)\s+\$end"
-__SCOPE_REGEXP__  = "^\$scope\s+(.*)\s+(.*)\s+\$end"
+from os     import cpu_count
+from _Var   import _Var   as Var
+from _Scope import _Scope as Scope
+from typing import Tuple, List, Dict
+from tqdm import tqdm
+from itertools import repeat
 
 class SVCD_Parser(VCD_Parser):
 
     def __init__(self,vcd_filename : str, sig_file : str = None):
-        super().__init__(vcd_filename, sig_file=sig_file, mode="standard")
-
-    
-    def parse(self) -> None:
-            
-        """
-        Generates a Tree data structure where every node is a $scope 
-        and holds as data nested $scopes and $vars
-        """
-
+        super().__init__(vcd_filename, sig_file = sig_file)
         super().fill_VCD_sections()
-
-        nesting_level = 0
-        node_id  = 0
-
-        s_regex  = re.compile(__SCOPE_REGEXP__)
-        v_regex  = re.compile(__VAR_REGEXP__)
-
-        current_cell = None
-
-        for raw_str in self.raw_sections[Section.Variable_Definition]:           
-
-            is_scope = re.match(s_regex, raw_str)
-            is_var   = re.match(v_regex, raw_str)
-
-            if is_scope:
-
-                scope = Scope(*is_scope.groups())
-                
-                self.tree_metadata[scope.cell_name] = node_id
-
-                if nesting_level == 0:
-                    # this is the root node
-                    self.tree.create_node(tag=scope.cell_name, identifier=node_id, data=scope)
-                    current_cell = self.tree.get_node(node_id)
-
-                else:
-                    
-                    # update the predecessor's nesting modules
-                    predecessor = self.tree.get_node(nesting_level-1)
-                    predecessor.data.append_scope(scope)
-                    self.tree.update_node(nid=predecessor.identifier, data=predecessor.data)
-                    # add the new node as a child to the previous one
-                    self.tree.create_node(tag=scope.cell_name, identifier=node_id, data=scope, parent=nesting_level-1)
-                    current_cell = self.tree.get_node(node_id)
-
-                nesting_level += 1
-                node_id       += 1
-
-            if is_var:
-                # get the current node (module) and update the wire's list                   
-                var = Var(*is_var.groups())
-                current_cell.data.append_var(var)
-                self.tree.update_node(nid=current_cell.identifier, data=current_cell.data)
-
-            # closing statement for module in VCD syntax
-            if "upscope" in raw_str: nesting_level -= 1
-
+        super().generate_tree(type = "standard")
+    
     def find_all_signal_values(self, signal_name: str) -> List[str]:
 
         retvals = list()
 
         value_change = '\n'.join(self.raw_sections[Section.Value_Change])
-        timestamp_regex = r"\#[0-9]+\n"
+        timestamp_regex = r"\#[0-9]+\n" 
 
         signal = self.get_signal(signal_name)
         signal_ascii_id = signal.get_id()
@@ -86,14 +32,19 @@ class SVCD_Parser(VCD_Parser):
 
         # can also be done with re.finditer
         sections = re.split(timestamp_regex, value_change, maxsplit=0, flags=re.DOTALL|re.MULTILINE)
-
+    
         previous_value = None 
 
         for n, section in enumerate(sections): 
             
+            if not section: continue 
+
             in_section = section.find(signal_ascii_id)
 
-            if n == 0: 
+            # For both VCDs that have either #0...$dumpvars or $dumpvars...$end...#0
+            if n == 1 and (not sections[n-1]) or \
+               n == 0 and sections[n]: 
+
                 # that's the $dumpvars section i.e., initial value
                 previous_value = section[in_section-signal_size:in_section]
             
@@ -144,16 +95,77 @@ class SVCD_Parser(VCD_Parser):
 
         return retvals
 
+    def find_signal_initial_value(self, signal_name : str, search_space : str = None) -> str: 
+        
+        search_space = '\n'.join(self.raw_sections[Section.Value_Change]) if not search_space else search_space
+
+        # Find the signal attributes in the Tree.
+        signal = self.get_signal(signal_name)
+        signal_ascii_id = signal.get_id()
+        signal_size = signal.get_size()
+
+        # Record every value change of the signal
+        found_symbol = search_space.find(signal_ascii_id)
+
+        if found_symbol == -1: 
+            exit(f"Signal {signal_name} with id: {signal_ascii_id} not found in the VCD file")
+        
+        logic_value = search_space[found_symbol-signal_size:found_symbol]
+        while logic_value not in ["1","0"]:
+
+            found_symbol = search_space.find(signal_ascii_id,found_symbol+1)
+            logic_value = search_space[found_symbol-signal_size:found_symbol]
+
+        return logic_value
+   
+    def _thread_func(self, values : Tuple[str,int,int])->List:
+        
+        signal, start, end = values 
+        logic_values = (start,end,signal)
+
+        return signal, logic_values
+
+    def find_signals_values_at(self, signals : List[str], start : int, end : int, proc_num : int = mp.cpu_count()) -> Dict[str,str]:
+
+        retval = dict()
+
+        chunksize, remainder = divmod(len(signals), 4 * proc_num)
+
+        if remainder: 
+            chunksize += 1
+
+        with mp.Pool(processes = proc_num) as pool: 
+
+            for signal, values in pool.imap_unordered(self._thread_func, zip(signals,repeat(start),repeat(end)), chunksize=chunksize):
+                
+                retval[signal] = values 
+        
+        return retval
+    
+    def find_signals_initial_values(self, signals : List[str], proc_num : int = mp.cpu_count()) -> Dict[str,str]:
+        
+        retval = dict()
+
+        values = list()
+        pool = mp.Pool(processes = proc_num) 
+
+
+        for value in pool.map(self.find_signal_initial_value, tqdm(signals)):
+            
+            values.append(value) 
+
+            pool.close()
+            pool.join()
+
+        retval = { signal : value for signal, value in zip(signals,values)}
+        return retval 
+        
 
 def main():
 
-    TestObj = SVCD_Parser("../misc/wikipedia.vcd", sig_file=None)
-    TestObj.parse()
-
-    #r = TestObj.find_all_signal_values2("tb_top_level/uGPGPU/uStreamingMultiProcessor/uPipelineDecode/U1211/A")
-    r = TestObj.find_all_signal_values("logic/tx_en")
-    for ret in r: print(ret)  
-
+    """
+    Do stuff here
+    """
 
 if __name__ == "__main__":
     main()
