@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from VCD_Parser import VCD_Parser 
-from utils import Section 
+from utils import Section, VCD_Type 
 
 import re
 import multiprocessing as mp
@@ -12,9 +12,7 @@ from typing      import Tuple, List, Dict
 class EVCD_Parser(VCD_Parser):
 
     def __init__(self, vcd_filename : str, sig_file : str = None):
-        super().__init__(vcd_filename, sig_file = sig_file)
-        super().fill_VCD_sections()
-        super().generate_tree(type = "extended")
+        super().__init__(vcd_filename, VCD_Type.Extended,  sig_file = sig_file)
 
     def find_all_signal_values(self, signal_name: str) -> List[str]: 
 

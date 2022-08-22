@@ -1,5 +1,5 @@
 from VCD_Parser import VCD_Parser 
-from utils import Section, tictoc
+from utils import *
 
 import time 
 import re
@@ -15,10 +15,8 @@ from itertools import repeat
 class SVCD_Parser(VCD_Parser):
 
     def __init__(self,vcd_filename : str, sig_file : str = None):
-        super().__init__(vcd_filename, sig_file = sig_file)
-        super().fill_VCD_sections()
-        super().generate_tree(type = "standard")
-    
+        super().__init__(vcd_filename, VCD_Type.Standard, sig_file = sig_file)
+
     def find_all_signal_values(self, signal_name: str) -> List[str]:
 
         retvals = list()
@@ -36,7 +34,7 @@ class SVCD_Parser(VCD_Parser):
         previous_value = None 
 
         for n, section in enumerate(sections): 
-            
+           
             if not section: continue 
 
             in_section = section.find(signal_ascii_id)
@@ -55,6 +53,15 @@ class SVCD_Parser(VCD_Parser):
             
             # search for multiple signal changes occuring in the section
             while(in_section != -1):
+                
+                if in_section + 1 < len(section) and \
+                (section[in_section + 1] == 'd'   or  # symbol == '$' && the $dumpvars line  
+                 section[in_section + 1] == 'e'   or  # symbol == '$' && the $end line      
+                 section[in_section + 1].isdigit()) : # symbol == '#' && the #[0-9]+ timestamp
+
+                    in_section = section.find(signal_ascii_id,in_section + 1)
+                    continue
+
                 previous_value = section[in_section-signal_size:in_section]
                 retvals.append(section[in_section-signal_size:in_section])
                 in_section = section.find(signal_ascii_id, in_section + 1)
@@ -74,7 +81,7 @@ class SVCD_Parser(VCD_Parser):
         if not regex_results: 
             raise ValueError("Provided timestamp(s) do not exist in the VCD file.")
 
-        period = regex_results[1]
+        section = regex_results[1]
 
         # Find the signal attributes in the Tree.
         signal = self.get_signal(signal_name)
@@ -82,16 +89,20 @@ class SVCD_Parser(VCD_Parser):
         signal_size = signal.get_size()
 
         # Record every value change of the signal
-        found_symbol = period.find(signal_ascii_id)
-        while(found_symbol != -1):
+        in_section = section.find(signal_ascii_id)
+        while(in_section != -1):
             
-            if period[found_symbol+1].isdigit():  # special case for the '#' char only
-                found_symbol = period.find(signal_ascii_id,found_symbol+1)
-                continue;
+            if in_section + 1 < len(section) and \
+            (section[in_section + 1] == 'd'   or  # symbol == '$' && the $dumpvars line  
+             section[in_section + 1] == 'e'   or  # symbol == '$' && the $end line      
+             section[in_section + 1].isdigit()) : # symbol == '#' && the #[0-9]+ timestamp
 
-            retvals.append(period[found_symbol-signal_size:found_symbol])
+                in_section = section.find(signal_ascii_id,in_section + 1)
+                continue
 
-            found_symbol = period.find(signal_ascii_id,found_symbol+1)
+            retvals.append(section[in_section-signal_size:in_section])
+
+            in_section = section.find(signal_ascii_id,in_section+1)
 
         return retvals
 
@@ -100,13 +111,13 @@ class SVCD_Parser(VCD_Parser):
         search_space = '\n'.join(self.raw_sections[Section.Value_Change]) if not search_space else search_space
 
         # Find the signal attributes in the Tree.
+
         signal = self.get_signal(signal_name)
         signal_ascii_id = signal.get_id()
         signal_size = signal.get_size()
 
-        # Record every value change of the signal
         found_symbol = search_space.find(signal_ascii_id)
-
+        
         if found_symbol == -1: 
             exit(f"Signal {signal_name} with id: {signal_ascii_id} not found in the VCD file")
         
@@ -147,25 +158,29 @@ class SVCD_Parser(VCD_Parser):
         retval = dict()
 
         values = list()
-        pool = mp.Pool(processes = proc_num) 
 
+        chunksize, remainder = divmod(len(signals), proc_num)
 
-        for value in pool.map(self.find_signal_initial_value, tqdm(signals)):
-            
-            values.append(value) 
+        if remainder: 
+            chunksize += 1
 
-            pool.close()
-            pool.join()
+        with mp.Pool(processes = proc_num) as pool:
 
-        retval = { signal : value for signal, value in zip(signals,values)}
+            for value in pool.imap(self.find_signal_initial_value, tqdm(signals), chunksize=chunksize):
+                
+                values.append(value) 
+
+        retval = { signal : value for signal, value in zip(signals,values) }
         return retval 
         
-
 def main():
 
     """
     Do stuff here
     """
+    Test_SVCD = SVCD_Parser("../misc/bmu_full.vcd", sig_file="../misc/si.txt")
+    results   = Test_SVCD.find_signals_initial_values(Test_SVCD.signals,proc_num=6)
 
 if __name__ == "__main__":
+
     main()

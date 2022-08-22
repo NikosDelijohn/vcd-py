@@ -10,6 +10,9 @@ class Section(Enum):
     Variable_Definition = auto()
     Value_Change        = auto()
 
+class VCD_Type(Enum):
+    Standard = auto()
+    Extended = auto()
 
 class eVCD_Strenth_Value(Enum):
 
