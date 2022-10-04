@@ -29,6 +29,7 @@ class VCD_Parser():
                 # VCD HEADER # 
                 current_section = Section.Header
                 line = VCDFILE.readline()
+                timestamp="#0"
                 while line:  
 
                     if current_section == Section.Header and "$scope" in line: 
@@ -44,8 +45,41 @@ class VCD_Parser():
                         continue
                 
                     self.raw_sections[current_section].append(line.rstrip())
+                    
+                    if line[0] == '#' and line[1].isdigit():
+                        timestamp = line 
 
                     line = VCDFILE.readline()
+
+            # timestamps only 
+            for lineno, line in enumerate(self.raw_sections[Section.Value_Change]):
+
+
+                if '$dumpvars' in line : continue 
+
+                if not len(line) or line[0] != '#': 
+
+                    if line[0] == 'b': 
+
+                        val, id = line[1:].split(' ')
+                        self.value_change[timestamp].append((id,val))
+
+                    else: 
+
+                        val = line[0]
+                        id  = line[1:]
+                        self.value_change[timestamp].append((id,val))
+
+                else: 
+
+                    try : 
+                        timestamp = int(line[1:])
+
+                    except Exception as err:
+                        ValueError(f"Casting to integer failed for line ({line}) in Value Change section ") 
+                    
+                    self.timestamps.append((timestamp,lineno))
+                    self.value_change[timestamp] = list()
 
         def _generate_tree(type : VCD_Type) -> None:
             
@@ -107,17 +141,21 @@ class VCD_Parser():
                 # closing statement for module in VCD syntax
                 if "upscope" in raw_str: predecessor_ids.pop()
 
-        def _sanitize_file( _file : str):
+        def _sanitize_file( _file : str) -> str:
             
-            if not _file : return None
+            if not _file : 
+                return None
 
             is_absolute = _file[0] == '/'
-            if is_absolute and isfile(_file):       
+            
+            if is_absolute and isfile(_file): 
                 return _file
+            
             elif not is_absolute and isfile(_file): 
                 return join(dirname(__file__),_file) 
+            
             else: 
-                exit(f"File {_file} not found")
+                FileNotFoundError(f"File {_file} not found")
 
         self.vcd_filename  = _sanitize_file(vcd_filename)
         self.type          = file_type
@@ -126,12 +164,24 @@ class VCD_Parser():
         self.tree          = Tree()
         self.tree_metadata = dict() # node_names : node_ids
         self.signals       = [line.rstrip() for line in open(self.sig_file).readlines()] if sig_file else list()
+        self.timestamps    = list()
+        self.value_change  = dict() # timestamp : list[tuple(id,val)]
 
         _fill_VCD_sections()
         _generate_tree(file_type)
-   
-    def get_signal(self, signal) -> Var:
+    
+    def get_signal(self, signal : str ) -> Var:
 
+        """
+        Searches in a top-down manner in the hierarchy to find the requested port ($var).
+
+        Parameters: 
+            signal (str) : The hierarhical signal name 
+        
+        Returns: 
+            Var : The _Var object if found. 
+        """
+        
         hierarchy = signal.split('/')
         port      = hierarchy[-1]
 
@@ -142,4 +192,3 @@ class VCD_Parser():
             subtree = self.tree.get_node(_tree_id)
 
         return subtree.data.get_var(port)
-  

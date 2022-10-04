@@ -12,10 +12,14 @@ from typing import Tuple, List, Dict
 from tqdm import tqdm
 from itertools import repeat
 
+@singleton
 class SVCD_Parser(VCD_Parser):
+
 
     def __init__(self,vcd_filename : str, sig_file : str = None):
         super().__init__(vcd_filename, VCD_Type.Standard, sig_file = sig_file)
+        
+
 
     def find_all_signal_values(self, signal_name: str) -> List[str]:
 
@@ -68,11 +72,12 @@ class SVCD_Parser(VCD_Parser):
 
         return retvals 
 
-    def find_signal_values_at(self, start : int, end : int, signal_name : str) -> List[str]:
+    def find_signal_values_at_region(self, start : int, end : int, signal_name : str) -> List[str]:
       
         retvals = list()
 
         search_space = '\n'.join(self.raw_sections[Section.Value_Change])
+                
         search_regex = f"#{start}(.*)^#{end}"
 
         # Extract the ]start,end[ segment
@@ -90,6 +95,7 @@ class SVCD_Parser(VCD_Parser):
 
         # Record every value change of the signal
         in_section = section.find(signal_ascii_id)
+
         while(in_section != -1):
             
             if in_section + 1 < len(section) and \
@@ -105,6 +111,27 @@ class SVCD_Parser(VCD_Parser):
             in_section = section.find(signal_ascii_id,in_section+1)
 
         return retvals
+
+    def find_signal_values_at(self, at : int, signal_name: str)  -> str: 
+
+        timestamps = [ ts for ts in self.value_change.keys() ]
+
+        if at not in timestamps: 
+            raise KeyError(f"Timestamp {at} is not present in the VCD")
+
+        search_space = [ ts for ts in timestamps[timestamps.index(at)::-1] ]
+
+        # Find the signal attributes in the Tree.
+        signal = self.get_signal(signal_name)
+        signal_ascii_id = signal.get_id()
+
+        for ts in search_space: 
+
+            for id, val in self.value_change[ts]: 
+
+                if signal_ascii_id == id : return val 
+        
+        raise RuntimeError(f"Signal {signal_name} : {signal} has never been assigned a value up until the region {at} you are currently searching")
 
     def find_signal_initial_value(self, signal_name : str, search_space : str = None) -> str: 
         
@@ -131,12 +158,13 @@ class SVCD_Parser(VCD_Parser):
    
     def _thread_func(self, values : Tuple[str,int,int])->List:
         
+        raise NotImplemented("Soon...")
         signal, start, end = values 
         logic_values = (start,end,signal)
 
         return signal, logic_values
 
-    def find_signals_values_at(self, signals : List[str], start : int, end : int, proc_num : int = mp.cpu_count()) -> Dict[str,str]:
+    def find_signals_values_at_region(self, signals : List[str], start : int, end : int, proc_num : int = mp.cpu_count()) -> Dict[str,str]:
 
         retval = dict()
 
@@ -178,8 +206,27 @@ def main():
     """
     Do stuff here
     """
-    Test_SVCD = SVCD_Parser("../misc/bmu_full.vcd", sig_file="../misc/si.txt")
-    results   = Test_SVCD.find_signals_initial_values(Test_SVCD.signals,proc_num=6)
+    Test_SVCD = SVCD_Parser(vcd_filename="../misc/riscy_tb2.vcd", sig_file="../misc/si_ri5cy.txt")
+    Test_SVCD2 = SVCD_Parser("../misc/riscy_tb.vcd", sig_file="../misc/si_ri5cy.txt")
+
+    print(Test_SVCD.vcd_filename)
+    print(Test_SVCD2.vcd_filename)
+    exit(0)
+    #Test_SVCD.get_signal("riscv_core_i/if_stage_i/prefetch_128_prefetch_buffer_i/L0_buffer_i/addr_q_reg_1_/Qf")
+
+    init_state = list()
+    for si in tqdm(Test_SVCD.signals): 
+
+        # latch
+        if "/enabled" in si :
+            init_state.append('X')
+            continue
+
+        init_state.append(Test_SVCD.find_signal_values_at(220_000, si))
+
+    for logic_value in init_state: 
+
+        print(logic_value,end="")
 
 if __name__ == "__main__":
 
